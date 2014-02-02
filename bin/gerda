@@ -79,12 +79,11 @@ class Gerrit(object):
         return [json.loads(line) for line in self(*command)]
 
 
-# taken from git-review, with small adjustments
-def parse_git_show(verb, remote='gerrit'):
-    fetch_url = ""
-    for line in run_command('git', 'remote', 'show', '-n', remote).split('\n'):
-        if line.strip().startswith("%s" % verb):
-            fetch_url = line.split()[2]
+# taken from git-review, with adjustments
+def _parse_git_show(remote='gerrit'):
+    fetch_url = _git_config_get('remote.%s.url' % remote)
+    if fetch_url is None:
+        return None, None, None, None
 
     parsed_url = urlparse(fetch_url)
     project_name = parsed_url.path.lstrip("/")
@@ -208,13 +207,11 @@ def _expand_project(options):
 
 def _parse_arguments(args):
     # try to derive gerrit url from git
-    try:
-        host, user, port, project = parse_git_show('Fetch')
-    except CommandFailed:
-        host = 'review.openstack.org'
-        user = _git_config_get('gitreview.username')
-        port = 29418
-        project = None
+    host, user, port, project = _parse_git_show()
+
+    host = host or 'review.openstack.org'
+    user = user or _git_config_get('gitreview.username')
+    port = port or 29418
 
     parser = argparse.ArgumentParser(prog=args[0])
     parser.add_argument('--host', '-H', default=host,
@@ -222,7 +219,7 @@ def _parse_arguments(args):
     parser.add_argument('--user', '-U', default=user,
                         required=(user is None),
                         help='Gerrit username')
-    parser.add_argument('--port', '-P', default=port,
+    parser.add_argument('--port', '-P', default=port, type=int,
                         help='Gerrit SSH port')
     parser.add_argument('--project', '-p', default=project,
                         required=(project is None),
@@ -243,7 +240,7 @@ def _parse_arguments(args):
     parser_list.set_defaults(func=dump_config, operation='Dump config')
 
     options = parser.parse_args(args[1:])
-    if project is None:
+    if project != options.project:
         options.project = _expand_project(options)
     return options
 
