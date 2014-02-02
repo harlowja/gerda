@@ -16,6 +16,8 @@ else:
 
 LOG = logging.getLogger('gerda')
 
+REMOTE_NAME = 'gerrit'
+
 
 class CommandFailed(RuntimeError):
 
@@ -96,7 +98,7 @@ class Gerrit(object):
 
 
 # taken from git-review, with adjustments
-def _parse_git_show(remote='gerrit'):
+def _parse_git_show(remote=REMOTE_NAME):
     fetch_url = _git_config_get('remote.%s.url' % remote)
     if fetch_url is None:
         return None, None, None, None
@@ -195,6 +197,33 @@ def list_changesets(options):
         write_out(_format_changeset(data), u'\n')
 
 
+def fetch_changeset(options):
+    """Fetch subcommand handler."""
+    gerrit = Gerrit(options.host, options.user, options.port)
+    change = options.changeset[0]
+    if options.host in change:
+        change = change.rstrip('/').rsplit('/', 1)[-1]
+    output = gerrit.query('--current-patch-set', 'change:%s' % change)
+    changes = [item for item in output if 'type' not in item]
+
+    if len(changes) != 1:
+        if len(changes) == 0:
+            msg = 'Change %s not found' % change
+        else:
+            msg = 'Got %s changesets for change %s' % (len(changes), change)
+        raise RuntimeError(msg)
+
+    item = changes[0]
+    if item['project'] != options.project:
+        raise RuntimeError('Wrong project for change %s: expected %s, got %s'
+                           % (change, options.project, item['project']))
+
+    ref = item['currentPatchSet']['ref']
+    LOG.info("Fetching change '%s' from ref %s into FETCH_HEAD",
+             item['subject'], ref)
+    run_command('git', 'fetch', REMOTE_NAME, ref)
+
+
 def dump_config(options):
     opts = vars(options)
     for param in ('host', 'port', 'project', 'user'):
@@ -219,7 +248,6 @@ def _expand_project(options):
 
     slashp = '/' + options.project
     for p in relevant_projects:
-        print '%r %r' % (p, slashp)
         if p.endswith(slashp):
             return p
     raise ValueError('Ambitious project %s, can be one of: %s'
@@ -256,6 +284,15 @@ def _parse_arguments(args):
         'patterns', metavar='PATTERN', nargs='*',
         help='Display only changes with matching topic or subject')
 
+    # fetch subcommand
+    parser_fetch = subparsers.add_parser('fetch', help='fetch changeset')
+    parser_fetch.set_defaults(func=fetch_changeset, operation='Fetch')
+    parser_fetch.add_argument('--project', '-p', default=project,
+                              required=(project is None),
+                              help='Gerrit project')
+    parser_fetch.add_argument('changeset', nargs=1,
+                              help='Change number or url')
+
     # projects subcommand
     parser_projects = subparsers.add_parser('ls-projects',
                                             help='list projects')
@@ -279,7 +316,7 @@ def _parse_arguments(args):
 
 
 def _setup_logging(verbose):
-    """Initialize logging"""
+    """Initialize logging."""
     # setup logging -- put messages to stderr
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
