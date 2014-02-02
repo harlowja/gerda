@@ -87,6 +87,13 @@ class Gerrit(object):
         command = ('query', '--format=JSON') + tuple(args)
         return [json.loads(line) for line in self(*command)]
 
+    def list_projects(self, *args):
+        projects = self('ls-projects')
+        if args:
+            projects = [project for project in projects
+                        if any(arg in project for arg in args)]
+        return projects
+
 
 # taken from git-review, with adjustments
 def _parse_git_show(remote='gerrit'):
@@ -194,10 +201,15 @@ def dump_config(options):
         write_out(u'%s: %s\n' % (param, opts[param]))
 
 
+def list_projects(options):
+    gerrit = Gerrit(options.host, options.user, options.port)
+    projects = gerrit.list_projects(*options.patterns)
+    write_out(u'\n'.join(projects), u'\n')
+
+
 def _expand_project(options):
     gerrit = Gerrit(options.host, options.user, options.port)
-    projects = gerrit('ls-projects')
-    relevant_projects = [p for p in projects if options.project in p]
+    relevant_projects = gerrit.list_projects(options.project)
     if not relevant_projects:
         raise ValueError('Project not found: %s' % options.project)
     if len(relevant_projects) == 1:
@@ -232,26 +244,36 @@ def _parse_arguments(args):
                         help='Gerrit username')
     parser.add_argument('--port', '-P', default=port, type=int,
                         help='Gerrit SSH port')
-    parser.add_argument('--project', '-p', default=project,
-                        required=(project is None),
-                        help='Gerrit project')
-
     subparsers = parser.add_subparsers(title='subcommands')
 
     # list subcommand
     parser_list = subparsers.add_parser('list', help='list changesets')
     parser_list.set_defaults(func=list_changesets, operation='List')
+    parser_list.add_argument('--project', '-p', default=project,
+                             required=(project is None),
+                             help='Gerrit project')
     parser_list.add_argument(
         'patterns', metavar='PATTERN', nargs='*',
         help='Display only changes with matching topic or subject')
 
+    # projects subcommand
+    parser_projects = subparsers.add_parser('ls-projects',
+                                            help='list projects')
+    parser_projects.set_defaults(func=list_projects, operation='Projects')
+    parser_projects.add_argument(
+        'patterns', metavar='PATTERN', nargs='*',
+        help='Display only changes with topic or subject containing pattern')
+
     # dump-config subcommand
-    parser_list = subparsers.add_parser('dump-config',
+    parser_dump = subparsers.add_parser('dump-config',
                                         help='print out configuration')
-    parser_list.set_defaults(func=dump_config, operation='Dump config')
+    parser_dump.set_defaults(func=dump_config, operation='Dump config')
+    parser_dump.add_argument('--project', '-p', default=project,
+                             help='Gerrit project')
 
     options = parser.parse_args(args[1:])
-    if project != options.project:
+    project_option = getattr(options, 'project', None)
+    if project_option is not None and project != project_option:
         options.project = _expand_project(options)
     return options
 
