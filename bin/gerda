@@ -68,14 +68,15 @@ class Gerrit(object):
 
     def __init__(self, hostname, username, port):
         userhost = '%s@%s' % (username, hostname)
-        self._cmdline_start = ('ssh', '-x', '-p', port, userhost,
-                               'gerrit', 'query',
-                               '--format=JSON')
+        self._cmdline_start = ('ssh', '-x', '-p', port, userhost, 'gerrit')
+
+    def __call__(self, *args):
+        cmdline = self._cmdline_start + tuple(args)
+        return run_command(*cmdline).splitlines()
 
     def query(self, *args):
-        cmdline = self._cmdline_start + tuple(args)
-        output = run_command(*cmdline)
-        return [json.loads(line) for line in output.splitlines()]
+        command = ('query', '--format=JSON') + tuple(args)
+        return [json.loads(line) for line in self(*command)]
 
 
 # taken from git-review, with small adjustments
@@ -185,6 +186,26 @@ def dump_config(options):
         write_out(u'%s: %s\n' % (param, opts[param]))
 
 
+def _expand_project(options):
+    gerrit = Gerrit(options.host, options.user, options.port)
+    projects = gerrit('ls-projects')
+    relevant_projects = [p for p in projects if options.project in p]
+    if not relevant_projects:
+        raise ValueError('Project not found: %s' % options.project)
+    if len(relevant_projects) == 1:
+        return relevant_projects[0]
+    if options.project in relevant_projects:
+        return options.project
+
+    slashp = '/' + options.project
+    for p in relevant_projects:
+        print '%r %r' % (p, slashp)
+        if p.endswith(slashp):
+            return p
+    raise ValueError('Ambitious project %s, can be one of: %s'
+                     % (options.project, ' '.join(relevant_projects)))
+
+
 def _parse_arguments(args):
     # try to derive gerrit url from git
     try:
@@ -221,7 +242,10 @@ def _parse_arguments(args):
                                         help='print out configuration')
     parser_list.set_defaults(func=dump_config, operation='Dump config')
 
-    return parser.parse_args(args[1:])
+    options = parser.parse_args(args[1:])
+    if project is None:
+        options.project = _expand_project(options)
+    return options
 
 
 def main(args):
