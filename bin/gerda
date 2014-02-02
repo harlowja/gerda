@@ -41,6 +41,44 @@ class CommandFailed(RuntimeError):
         return result
 
 
+class Colorizer(object):
+    """Very simple and unportable output colorizer."""
+
+    _ESC_SEQS = {
+        'reset': '\033[0m',
+        'bold': '\033[1m',
+        'red': '\033[31m',
+        'green': '\033[32m'
+    }
+
+    def __init__(self, mode='auto'):
+        if mode == 'auto':
+            self.colorize = sys.stdout.isatty()
+        elif mode == 'always':
+            self.colorize = True
+        elif mode == 'never':
+            self.colorize = False
+        else:
+            raise ValueError('Invalid mode: %r' % mode)
+
+    def quote(self, arg, color):
+        if not self.colorize:
+            return arg
+        try:
+            return u'%s%s%s' % (self._ESC_SEQS[color],
+                                arg,
+                                self._ESC_SEQS['reset'])
+        except KeyError as e:
+            raise ValueError('Unknown color: %s' % e)
+
+    def quote_approval(self, approval, how):
+        if how == '+':
+            return self.quote(approval, 'green')
+        if how == '-':
+            return self.quote(approval, 'red')
+        return approval
+
+
 def run_command(*args, **kwargs):
     encoding = kwargs.pop('encoding', 'utf-8')
     cmdline = [str(arg) for arg in args]
@@ -158,12 +196,19 @@ def _changeset_data(item):
     return data
 
 
-def _format_changeset(data):
+def _format_changeset(data, color_mode):
+    colorizer = Colorizer(color_mode)
+
     data = data.copy()
     if data['approvals']:
-        data['approvals'] = ' '.join(data['approvals']) + '  '
+        data['approvals'] = ' '.join(
+            colorizer.quote_approval(a, a[1])
+            for a in data['approvals']
+        ) + '  '
     else:
         data['approvals'] = ''
+
+    data['subject'] = colorizer.quote(data['subject'], 'bold')
 
     # NOTE(imelnikov): extra spaces make output more readable imo.
     return (u"%(subject)s[%(topic)s] by %(owner)s  %(url)s\n"
@@ -194,7 +239,7 @@ def list_changesets(options):
                                or rex.search(data['topic'])
                                for rex in regexps):
             continue
-        write_out(_format_changeset(data), u'\n')
+        write_out(_format_changeset(data, options.color), u'\n')
 
 
 def fetch_changeset(options):
@@ -280,6 +325,9 @@ def _parse_arguments(args):
     parser_list.add_argument('--project', '-p', default=project,
                              required=(project is None),
                              help='Gerrit project')
+    parser_list.add_argument('--color', '-c', default='auto',
+                             choices=['auto', 'never', 'always'],
+                             help='Colorize output')
     parser_list.add_argument(
         'patterns', metavar='PATTERN', nargs='*',
         help='Display only changes with matching topic or subject')
