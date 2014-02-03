@@ -183,18 +183,22 @@ def _format_approval(approval):
 
 
 def _changeset_data(item):
-    approvals = [_format_approval(a)
-                 for a in item['currentPatchSet'].get('approvals', ())]
-
-    data = dict(subject=item['subject'],
-                owner=item['owner']['name'],
-                status=item['status'],
-                url=item['url'],
-                topic=item.get('topic', ''),
-                ref=item['currentPatchSet']['ref'],
-                approvals=approvals)
-    if data['status'] == 'WORKINPROGRESS':
-        data['status'] = 'WIP'
+    try:
+        approvals = item['currentPatchSet']['approvals']
+    except KeyError:
+        approvals = []
+    try:
+        data = dict(subject=item['subject'],
+                    owner=item['owner']['name'],
+                    status=item['status'],
+                    url=item['url'],
+                    topic=item.get('topic', ''),
+                    ref=item['currentPatchSet']['ref'],
+                    approvals=[_format_approval(a) for a in approvals])
+        if data['status'] == 'WORKINPROGRESS':
+            data['status'] = 'WIP'
+    except KeyError:
+        LOG.error('Failed to parse data for item %r' % item)
     return data
 
 
@@ -228,9 +232,11 @@ def _compile_pattern(pattern):
 def list_changesets(options):
     """List subcommand handler."""
     gerrit = Gerrit(options.host, options.user, options.port)
-    output = gerrit.query('--current-patch-set',
-                          'project:%s' % options.project,
-                          'status:open')
+    cmdline = ['--current-patch-set',
+               'project:%s' % options.project]
+    if not options.all:
+        cmdline.append('status:open')
+    output = gerrit.query(*cmdline)
     regexps = [_compile_pattern(pattern)
                for pattern in options.patterns]
     for item in output:
@@ -392,6 +398,8 @@ def _parse_arguments(args):
     parser_list.add_argument('--project', '-p', default=project,
                              required=(project is None),
                              help='Gerrit project')
+    parser_list.add_argument('--all', default=False, action='store_true',
+                             help='Display all (not just open) changes')
     parser_list.add_argument('--color', '-c', default='auto',
                              choices=['auto', 'never', 'always'],
                              help='Colorize output')
