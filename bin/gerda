@@ -362,8 +362,8 @@ def _parse_arguments(args):
 
     options = parser.parse_args(args[1:])
     project_option = getattr(options, 'project', None)
-    if project_option is not None and project != project_option:
-        options.project = _expand_project(options)
+    options.expand_project = (project_option is not None
+                              and project != project_option)
     return options
 
 
@@ -379,9 +379,21 @@ def _setup_logging(verbose):
 
 
 def main(args):
-    options = _parse_arguments(args)
-    _setup_logging(options.verbose)
     try:
+        options = _parse_arguments(args)
+    except Exception as e:
+        write_out(u'Initialization failed: %s\n' % e)
+        return 1
+
+    try:
+        _setup_logging(options.verbose)
+    except Exception as e:
+        write_out(u'Initialization failed: %s\n' % e)
+        return 1
+
+    try:
+        if options.expand_project:
+            options.project = _expand_project(options)
         return options.func(options) or 0
     except Exception as e:
         if options.verbose:
