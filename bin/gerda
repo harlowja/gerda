@@ -119,6 +119,7 @@ class Gerrit(object):
     def __init__(self, hostname, username, port):
         userhost = '%s@%s' % (username, hostname)
         self._cmdline_start = ('ssh', '-x', '-p', port, userhost, 'gerrit')
+        self.hostname = hostname
 
     def __call__(self, *args):
         cmdline = self._cmdline_start + tuple(args)
@@ -243,14 +244,11 @@ def list_changesets(options):
         write_out(_format_changeset(data, options.color), u'\n')
 
 
-def fetch_changeset(options):
-    """Fetch subcommand handler."""
-    gerrit = Gerrit(options.host, options.user, options.port)
-    change = options.changeset[0]
+def _fetch_changeset(gerrit, change, project=None):
     ref = None
     patchset = None
 
-    if options.host in change:
+    if gerrit.hostname in change:
         change = change.rstrip('/').rsplit('/', 1)[-1]
     elif change.startswith('refs/changes/'):
         sp = change.split('/')
@@ -279,9 +277,9 @@ def fetch_changeset(options):
         raise RuntimeError(msg)
 
     item = changes[0]
-    if item['project'] != options.project:
+    if project and item['project'] != project:
         raise RuntimeError('Wrong project for change %s: expected %s, got %s'
-                           % (change, options.project, item['project']))
+                           % (change, project, item['project']))
 
     if ref is None:
         ref = item['currentPatchSet']['ref']
@@ -294,6 +292,48 @@ def fetch_changeset(options):
     LOG.info("Fetching change '%s' from ref %s into FETCH_HEAD",
              item['subject'], ref)
     run_command('git', 'fetch', REMOTE_NAME, ref)
+
+
+def fetch_changeset(options):
+    """Fetch subcommand handler."""
+    gerrit = Gerrit(options.host, options.user, options.port)
+    change = options.changeset[0]
+    _fetch_changeset(gerrit, change, options.project)
+
+
+def reset_to_changeset(options):
+    """Reset-to command handler."""
+    gerrit = Gerrit(options.host, options.user, options.port)
+
+    # 1. Test current repository is clean
+    try:
+        unclean = run_command('git', 'status', '--porcelain')
+    except CommandFailed as e:
+        unclean = str(e)
+    if unclean:
+        raise RuntimeError('We are not in clean git repository:'
+                           '\n%s' % unclean)
+
+    # 2. Check that current change were put to gerrit
+    head_sha = run_command('git', 'rev-parse', 'HEAD').strip()
+    items = [item for item in gerrit.query(head_sha)
+             if 'type' not in item]
+    if len(items) != 1:
+        if len(items) == 0:
+            msg = 'Looks like your current code is not in gerrit yet.'
+        else:
+            msg = 'Got %s changesets for current HEAD (%s): %s' % (
+                len(items), head_sha)
+        raise RuntimeError(msg)
+
+    # 3. Fetch changeset
+    gerrit = Gerrit(options.host, options.user, options.port)
+    change = options.changeset[0]
+    _fetch_changeset(gerrit, change, options.project)
+
+    # 4. Hard-reset to it!
+    LOG.info('Doing HARD RESET to fetched change')
+    write_out(run_command('git', 'reset', '--hard', 'FETCH_HEAD'))
 
 
 def dump_config(options):
@@ -367,6 +407,17 @@ def _parse_arguments(args):
                               help='Gerrit project')
     parser_fetch.add_argument('changeset', nargs=1,
                               help='Change number or url')
+
+    # reset-to subcommand
+    parser_reset_to = subparsers.add_parser('reset-to',
+                                         help='hard reset to changeset')
+    parser_reset_to.set_defaults(func=reset_to_changeset,
+                                 operation='Reset-to')
+    parser_reset_to.add_argument('--project', '-p', default=project,
+                                 required=(project is None),
+                                 help='Gerrit project')
+    parser_reset_to.add_argument('changeset', nargs=1,
+                                 help='Change number or url')
 
     # projects subcommand
     parser_projects = subparsers.add_parser('ls-projects',
