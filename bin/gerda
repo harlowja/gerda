@@ -247,8 +247,24 @@ def fetch_changeset(options):
     """Fetch subcommand handler."""
     gerrit = Gerrit(options.host, options.user, options.port)
     change = options.changeset[0]
+    ref = None
+    patchset = None
+
     if options.host in change:
         change = change.rstrip('/').rsplit('/', 1)[-1]
+    elif change.startswith('refs/changes/'):
+        sp = change.split('/')
+        if len(sp) not in (4, 5):
+            raise ValueError('Invalid change format: %s' % change)
+        if sp[2] != sp[3][-2:]:
+            raise ValueError('Invalid change format: %s' % change)
+        if len(sp) == 5 and sp[4]:
+            ref = change
+            try:
+                patchset = int(sp[4])
+            except ValueError:
+                raise ValueError('Invalid change %s: bad patchset' % change)
+        change = sp[3]
 
     if not all(c in string.digits for c in change):
         raise ValueError("Invalid change number: %s" % change)
@@ -267,7 +283,14 @@ def fetch_changeset(options):
         raise RuntimeError('Wrong project for change %s: expected %s, got %s'
                            % (change, options.project, item['project']))
 
-    ref = item['currentPatchSet']['ref']
+    if ref is None:
+        ref = item['currentPatchSet']['ref']
+    if patchset is not None:
+        current = int(item['currentPatchSet']['number'])
+        if patchset < 1 or patchset > current:
+            raise ValueError('Invalid change %s: bad patchset, current is %s'
+                             % (ref, current))
+
     LOG.info("Fetching change '%s' from ref %s into FETCH_HEAD",
              item['subject'], ref)
     run_command('git', 'fetch', REMOTE_NAME, ref)
