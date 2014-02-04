@@ -138,6 +138,21 @@ class Gerrit(object):
         command = ('query', '--format=JSON') + tuple(args)
         return [json.loads(line) for line in self(*command)]
 
+    def query_one(self, *args, **kwargs):
+        items = [item for item in self.query(*args)
+                 if 'type' not in item]
+        if len(items) > 1:
+            what = kwargs.pop(what)
+            if what is None:
+                what = ' '.join(args)
+            raise RuntimeError('Got several changes for %s, '
+                               'expected one' % what)
+        elif len(items) == 1:
+            return items[0]
+        else:
+            return None
+
+
     def list_projects(self, *args):
         projects = self('ls-projects')
         if args:
@@ -289,16 +304,11 @@ def _parse_change(change):
 def _fetch_changeset(gerrit, change, project=None):
     change_num, patchset = _parse_change(change)
 
-    output = gerrit.query('--current-patch-set', 'change:%s' % change_num)
-    items = [item for item in output if 'type' not in item]
-    if len(items) != 1:
-        if len(items) == 0:
-            msg = 'Change %s not found' % change_num
-        else:
-            msg = 'Got %s changesets for change %s' % (len(changes), change)
-        raise RuntimeError(msg)
+    item = gerrit.query_one('--current-patch-set',
+                            'change:%s' % change_num)
+    if item is None:
+        raise RuntimeError('Change %s not found' % change_num)
 
-    item = items[0]
     if project and item['project'] != project:
         raise RuntimeError('Wrong project for change %s: expected %s, got %s'
                            % (change, project, item['project']))
@@ -326,12 +336,7 @@ def fetch_changeset(options):
 def _check_commit_uploaded(gerrit, sha):
     # Maybe it's one of uploaded patchsets?
 
-    items = [item for item in gerrit.query(sha)
-             if 'type' not in item]
-    if len(items) > 1:
-        raise RuntimeError('Got %s changesets for sha %s, strange'
-                           % (len(items), sha))
-    if len(items) == 1:
+    if gerrit.query_one(sha) is not None:
         return True
 
     # Maybe it's other commit from current branch?
@@ -494,11 +499,6 @@ def _setup_logging(verbose):
 def main(args):
     try:
         options = _parse_arguments(args)
-    except Exception as e:
-        write_out(u'Initialization failed: %s\n' % e)
-        return 1
-
-    try:
         _setup_logging(options.verbose)
     except Exception as e:
         write_out(u'Initialization failed: %s\n' % e)
