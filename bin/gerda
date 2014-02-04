@@ -259,51 +259,58 @@ def list_changesets(options):
         write_out(_format_changeset(data, options.color), u'\n')
 
 
-def _fetch_changeset(gerrit, change, project=None):
-    ref = None
+def _parse_change(change):
     patchset = None
 
-    if gerrit.hostname in change:
-        change = change.rstrip('/').rsplit('/', 1)[-1]
-    elif change.startswith('refs/changes/'):
+    if change.startswith('refs/changes/'):
         sp = change.split('/')
         if len(sp) not in (4, 5):
             raise ValueError('Invalid change format: %s' % change)
         if sp[2] != sp[3][-2:]:
             raise ValueError('Invalid change format: %s' % change)
         if len(sp) == 5 and sp[4]:
-            ref = change
-            try:
-                patchset = int(sp[4])
-            except ValueError:
-                raise ValueError('Invalid change %s: bad patchset' % change)
-        change = sp[3]
+            patchset = sp[4]
+        change_num = sp[3]
+    elif '/' in change:
+        change_num = change.rstrip('/').rsplit('/', 1)[-1]
 
-    if not all(c in string.digits for c in change):
+    if not all(c in string.digits for c in change_num):
         raise ValueError("Invalid change number: %s" % change)
+    if patchset is not None:
+        try:
+            patchset = int(patchset)
+        except ValueError:
+            raise ValueError('Invalid change %s: bad patchset' % change)
+        if patchset <= 0:
+            raise ValueError('Invalid change %s: bad patchset' % change)
+    return change_num, patchset
 
-    output = gerrit.query('--current-patch-set', 'change:%s' % change)
-    changes = [item for item in output if 'type' not in item]
-    if len(changes) != 1:
-        if len(changes) == 0:
-            msg = 'Change %s not found' % change
+
+def _fetch_changeset(gerrit, change, project=None):
+    change_num, patchset = _parse_change(change)
+
+    output = gerrit.query('--current-patch-set', 'change:%s' % change_num)
+    items = [item for item in output if 'type' not in item]
+    if len(items) != 1:
+        if len(items) == 0:
+            msg = 'Change %s not found' % change_num
         else:
             msg = 'Got %s changesets for change %s' % (len(changes), change)
         raise RuntimeError(msg)
 
-    item = changes[0]
+    item = items[0]
     if project and item['project'] != project:
         raise RuntimeError('Wrong project for change %s: expected %s, got %s'
                            % (change, project, item['project']))
 
-    if ref is None:
-        ref = item['currentPatchSet']['ref']
-    if patchset is not None:
-        current = int(item['currentPatchSet']['number'])
-        if patchset < 1 or patchset > current:
-            raise ValueError('Invalid change %s: bad patchset, current is %s'
-                             % (ref, current))
+    current_patchset = int(item['currentPatchSet']['number'])
+    if patchset is None:
+        patchset = current_patchset
+    elif patchset > current_patchset:
+        raise ValueError('Invalid change %s: bad patchset, current is %s'
+                         % (change, current_patchset))
 
+    ref = 'refs/changes/%s/%s/%s' % (change_num[-2:], change_num, patchset)
     LOG.info("Fetching change '%s' from ref %s into FETCH_HEAD",
              item['subject'], ref)
     _git('fetch', REMOTE_NAME, ref)
