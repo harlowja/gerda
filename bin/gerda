@@ -100,18 +100,27 @@ def run_command(*args, **kwargs):
     return output[0].decode(encoding)
 
 
+def _git(*args, **kwargs):
+    strip = kwargs.pop('strip', True)
+    cmdline = ('git',) + tuple(args)
+    output = run_command(*cmdline, **kwargs)
+    if strip:
+        output = output.strip()
+    return output
+
+
+def _git_config_get(param):
+    try:
+        return _git('config', '--get', param)
+    except CommandFailed:
+        return None
+
+
 def write_out(*args, **kwargs):
     output = kwargs.pop('output', sys.stdout)
     encoding = kwargs.pop('encoding', 'utf-8')
     for arg in args:
         output.write(arg.encode(encoding))
-
-
-def _git_config_get(param):
-    try:
-        return run_command('git', 'config', '--get', param).strip()
-    except CommandFailed:
-        return None
 
 
 class Gerrit(object):
@@ -297,7 +306,7 @@ def _fetch_changeset(gerrit, change, project=None):
 
     LOG.info("Fetching change '%s' from ref %s into FETCH_HEAD",
              item['subject'], ref)
-    run_command('git', 'fetch', REMOTE_NAME, ref)
+    _git('fetch', REMOTE_NAME, ref)
 
 
 def fetch_changeset(options):
@@ -307,13 +316,34 @@ def fetch_changeset(options):
     _fetch_changeset(gerrit, change, options.project)
 
 
+def _check_commit_uploaded(gerrit, sha):
+    # Maybe it's one of uploaded patchsets?
+
+    items = [item for item in gerrit.query(sha)
+             if 'type' not in item]
+    if len(items) > 1:
+        raise RuntimeError('Got %s changesets for sha %s, strange'
+                           % (len(items), sha))
+    if len(items) == 1:
+        return True
+
+    # Maybe it's other commit from current branch?
+    try:
+        current_branch = _git('symbolic-ref', '--short', 'HEAD')
+        _git('fetch', REMOTE_NAME, current_branch)
+        merge_base = _git('merge-base', sha, 'FETCH_HEAD')
+    except CommandFailed:
+        return False
+    return merge_base == sha
+
+
 def reset_to_changeset(options):
     """Reset-to command handler."""
     gerrit = Gerrit(options.host, options.user, options.port)
 
     # 1. Test current repository is clean
     try:
-        unclean = run_command('git', 'status', '--porcelain')
+        unclean = _git('status', '--porcelain')
     except CommandFailed as e:
         unclean = str(e)
     if unclean:
@@ -321,16 +351,10 @@ def reset_to_changeset(options):
                            '\n%s' % unclean)
 
     # 2. Check that current change were put to gerrit
-    head_sha = run_command('git', 'rev-parse', 'HEAD').strip()
-    items = [item for item in gerrit.query(head_sha)
-             if 'type' not in item]
-    if len(items) != 1:
-        if len(items) == 0:
-            msg = 'Looks like your current code is not in gerrit yet.'
-        else:
-            msg = 'Got %s changesets for current HEAD (%s): %s' % (
-                len(items), head_sha)
-        raise RuntimeError(msg)
+    head_sha = _git('rev-parse', 'HEAD')
+    if not _check_commit_uploaded(gerrit, head_sha):
+        raise RuntimeError('Looks like your current code'
+                           'is not in gerrit yet')
 
     # 3. Fetch changeset
     gerrit = Gerrit(options.host, options.user, options.port)
@@ -339,7 +363,7 @@ def reset_to_changeset(options):
 
     # 4. Hard-reset to it!
     LOG.info('Doing HARD RESET to fetched change')
-    write_out(run_command('git', 'reset', '--hard', 'FETCH_HEAD'))
+    write_out(_git('reset', '--hard', 'FETCH_HEAD', strip=False))
 
 
 def dump_config(options):
