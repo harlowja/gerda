@@ -288,6 +288,8 @@ def _parse_change(change):
         change_num = sp[3]
     elif '/' in change:
         change_num = change.rstrip('/').rsplit('/', 1)[-1]
+    else:
+        change_num = change
 
     if not all(c in string.digits for c in change_num):
         raise ValueError("Invalid change number: %s" % change)
@@ -389,6 +391,15 @@ def list_projects(options):
     projects = gerrit.list_projects(*options.patterns)
     write_out(u'\n'.join(projects), u'\n')
 
+def open_changeset(options):
+    gerrit = Gerrit(options.host, options.user, options.port)
+    change_num, patchset = _parse_change(options.changeset[0])
+    item = gerrit.query_one('change:%s' % change_num)
+    if item is None:
+        raise RuntimeError('Change %s not found' % change_num)
+    url = item['url']
+    run_command(options.open_with, url)
+
 
 def _expand_project(options):
     gerrit = Gerrit(options.host, options.user, options.port)
@@ -454,7 +465,7 @@ def _parse_arguments(args):
 
     # reset-to subcommand
     parser_reset_to = subparsers.add_parser('reset-to',
-                                         help='hard reset to changeset')
+                                            help='hard reset to changeset')
     parser_reset_to.set_defaults(func=reset_to_changeset,
                                  operation='Reset-to')
     parser_reset_to.add_argument('--project', '-p', default=project,
@@ -462,6 +473,15 @@ def _parse_arguments(args):
                                  help='Gerrit project')
     parser_reset_to.add_argument('changeset', nargs=1,
                                  help='Change number or url')
+
+    # open subcommand
+    parser_open = subparsers.add_parser(
+        'open', help='open changeset in browser')
+    parser_open.set_defaults(func=open_changeset, operation='Open')
+    parser_open.add_argument('changeset', nargs=1,
+                             help='Change number or url')
+    parser_open.add_argument('--open-with', '-w', default='xdg-open',
+                             help='Program to open changeset with')
 
     # projects subcommand
     parser_projects = subparsers.add_parser('ls-projects',
