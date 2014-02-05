@@ -360,7 +360,7 @@ def reset_to_changeset(options):
     """Reset-to command handler."""
     gerrit = Gerrit(options.host, options.user, options.port)
 
-    # 1. Test current repository is clean
+    LOG.debug("1. Test current repository is clean")
     try:
         unclean = _git('status', '--porcelain')
     except CommandFailed as e:
@@ -369,20 +369,33 @@ def reset_to_changeset(options):
         raise RuntimeError('We are not in clean git repository:'
                            '\n%s' % unclean)
 
-    # 2. Check that current change were put to gerrit
+    LOG.debug("2. Check that current change were put to gerrit")
     head_sha = _git('rev-parse', 'HEAD')
     if not _check_commit_uploaded(gerrit, head_sha):
         raise RuntimeError('Looks like your current code'
                            'is not in gerrit yet')
 
-    # 3. Fetch changeset
     gerrit = Gerrit(options.host, options.user, options.port)
-    change = options.changeset[0]
-    _fetch_changeset(gerrit, change, options.project)
+    target = options.target
 
-    # 4. Hard-reset to it!
-    LOG.info('Doing HARD RESET to fetched change')
-    write_out(_git('reset', '--hard', 'FETCH_HEAD', strip=False))
+    LOG.debug("3. Check if we are resetting to branch")
+    is_branch = False
+    if gerrit.hostname not in target and not target.startswith('refs/'):
+        output = _git('ls-remote', REMOTE_NAME, 'refs/heads/%s' % target)
+        if output:
+            is_branch = True
+
+    if is_branch:
+        LOG.debug("Fetch latest changes from remote")
+        _git('remote', 'update', REMOTE_NAME)
+        target = '%s/%s' % (REMOTE_NAME, target)
+    else:
+        LOG.debug("Fetch changeset")
+        _fetch_changeset(gerrit, target, options.project)
+        target = 'FETCH_HEAD'
+
+    LOG.info('Doing HARD RESET to %s' % target)
+    write_out(_git('reset', '--hard', target, strip=False))
 
 
 def dump_config(options):
@@ -469,15 +482,15 @@ def _parse_arguments(args):
                               help='Change number or url')
 
     # reset-to subcommand
-    parser_reset_to = subparsers.add_parser('reset-to',
-                                            help='hard reset to changeset')
+    parser_reset_to = subparsers.add_parser(
+        'reset-to', help='hard reset to changeset or branch')
     parser_reset_to.set_defaults(func=reset_to_changeset,
                                  operation='Reset-to')
     parser_reset_to.add_argument('--project', '-p', default=project,
                                  required=(project is None),
                                  help='Gerrit project')
-    parser_reset_to.add_argument('changeset', nargs=1,
-                                 help='Change number or url')
+    parser_reset_to.add_argument(
+        'target', help='Change number or url, or gerrit branch name')
 
     # open subcommand
     parser_open = subparsers.add_parser(
