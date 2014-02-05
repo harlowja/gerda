@@ -212,8 +212,12 @@ def _changeset_data(item):
     except KeyError:
         approvals = []
     try:
+        owner_name = item['owner']['name']
+    except KeyError:
+        owner_name = item['owner']['email']
+    try:
         data = dict(subject=item['subject'],
-                    owner=item['owner']['name'],
+                    owner=owner_name,
                     status=item['status'],
                     url=item['url'],
                     topic=item.get('topic', ''),
@@ -221,9 +225,10 @@ def _changeset_data(item):
                     approvals=[_format_approval(a) for a in approvals])
         if data['status'] == 'WORKINPROGRESS':
             data['status'] = 'WIP'
+        return data
     except KeyError:
         LOG.error('Failed to parse data for item %r' % item)
-    return data
+        raise
 
 
 def _format_changeset(data, color_mode):
