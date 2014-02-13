@@ -1,5 +1,21 @@
 #!/usr/bin/env python
 
+"""Gerda: command-line tool to work with Gerrit.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may
+not use this file except in compliance with the License. You may obtain
+a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
+"""
+
+
 import json
 import locale
 import logging
@@ -450,9 +466,9 @@ def _parse_arguments(args):
     port = port or 29418
 
 
-    parser = argparse.ArgumentParser(
-        description='command-line tool to work with gerrit',
-        prog=args[0])
+    description = __doc__.split('\n', 1)[0]
+    parser = argparse.ArgumentParser(prog=args[0],
+                                     description=description)
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='verbose operation')
     parser.add_argument('--host', '-H', default=host,
@@ -514,6 +530,10 @@ def _parse_arguments(args):
     parser_projects.add_argument(
         'patterns', metavar='PATTERN', nargs='*',
         help='Display only changes with topic or subject containing pattern')
+
+    # license subcommand
+    parser_license = subparsers.add_parser('license', help='print license')
+    parser_license.set_defaults(func=lambda _: write_out(__doc__))
 
     # dump-config subcommand
     parser_dump = subparsers.add_parser('dump-config',
