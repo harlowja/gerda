@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import json
+import locale
 import logging
 import re
 import string
@@ -117,10 +118,13 @@ def _git_config_get(param):
 
 
 def write_out(*args, **kwargs):
-    output = kwargs.pop('output', sys.stdout)
-    encoding = kwargs.pop('encoding', 'utf-8')
+    if sys.version < '3':
+        output = kwargs.pop('output', sys.stdout)
+    else:
+        output = kwargs.pop('output', sys.stdout.buffer)
+    encoding = locale.getpreferredencoding()
     for arg in args:
-        output.write(arg.encode(encoding))
+        output.write(arg.encode(encoding, errors='replace'))
 
 
 class Gerrit(object):
