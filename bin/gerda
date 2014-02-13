@@ -445,7 +445,10 @@ def _parse_arguments(args):
     user = user or _git_config_get('gitreview.username')
     port = port or 29418
 
-    parser = argparse.ArgumentParser(prog=args[0])
+
+    parser = argparse.ArgumentParser(
+        description='command-line tool to work with gerrit',
+        prog=args[0])
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='verbose operation')
     parser.add_argument('--host', '-H', default=host,
@@ -455,11 +458,11 @@ def _parse_arguments(args):
                         help='Gerrit username')
     parser.add_argument('--port', '-P', default=port, type=int,
                         help='Gerrit SSH port')
-    subparsers = parser.add_subparsers(title='subcommands')
+    subparsers = parser.add_subparsers(title='commands', dest='command')
 
     # list subcommand
     parser_list = subparsers.add_parser('list', help='list changesets')
-    parser_list.set_defaults(func=list_changesets, operation='List')
+    parser_list.set_defaults(func=list_changesets)
     parser_list.add_argument('--project', '-p', default=project,
                              required=(project is None),
                              help='Gerrit project')
@@ -474,7 +477,7 @@ def _parse_arguments(args):
 
     # fetch subcommand
     parser_fetch = subparsers.add_parser('fetch', help='fetch changeset')
-    parser_fetch.set_defaults(func=fetch_changeset, operation='Fetch')
+    parser_fetch.set_defaults(func=fetch_changeset)
     parser_fetch.add_argument('--project', '-p', default=project,
                               required=(project is None),
                               help='Gerrit project')
@@ -484,8 +487,7 @@ def _parse_arguments(args):
     # reset-to subcommand
     parser_reset_to = subparsers.add_parser(
         'reset-to', help='hard reset to changeset or branch')
-    parser_reset_to.set_defaults(func=reset_to_changeset,
-                                 operation='Reset-to')
+    parser_reset_to.set_defaults(func=reset_to_changeset)
     parser_reset_to.add_argument('--project', '-p', default=project,
                                  required=(project is None),
                                  help='Gerrit project')
@@ -495,7 +497,7 @@ def _parse_arguments(args):
     # open subcommand
     parser_open = subparsers.add_parser(
         'open', help='open changeset in browser')
-    parser_open.set_defaults(func=open_changeset, operation='Open')
+    parser_open.set_defaults(func=open_changeset)
     parser_open.add_argument('changeset', nargs=1,
                              help='Change number or url')
     parser_open.add_argument('--open-with', '-w', default='xdg-open',
@@ -504,7 +506,7 @@ def _parse_arguments(args):
     # projects subcommand
     parser_projects = subparsers.add_parser('ls-projects',
                                             help='list projects')
-    parser_projects.set_defaults(func=list_projects, operation='Projects')
+    parser_projects.set_defaults(func=list_projects)
     parser_projects.add_argument(
         'patterns', metavar='PATTERN', nargs='*',
         help='Display only changes with topic or subject containing pattern')
@@ -512,11 +514,11 @@ def _parse_arguments(args):
     # dump-config subcommand
     parser_dump = subparsers.add_parser('dump-config',
                                         help='print out configuration')
-    parser_dump.set_defaults(func=dump_config, operation='Dump config')
+    parser_dump.set_defaults(func=dump_config)
     parser_dump.add_argument('--project', '-p', default=project,
                              help='Gerrit project')
 
-    options = parser.parse_args(args[1:])
+    options = parser.parse_args(args[1:] or ['--help'])
     project_option = getattr(options, 'project', None)
     options.expand_project = (project_option is not None
                               and project != project_option)
@@ -548,9 +550,9 @@ def main(args):
         return options.func(options) or 0
     except Exception as e:
         if options.verbose:
-            LOG.exception("%s failed", options.operation)
+            LOG.exception("Command %s failed", options.command)
         else:
-            LOG.error("%s failed: %s", options.operation, e)
+            LOG.error("Command %s failed: %s", options.command, e)
         return 1
 
 
