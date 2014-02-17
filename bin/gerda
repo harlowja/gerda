@@ -159,19 +159,26 @@ class Gerrit(object):
         return [json.loads(line) for line in self(*command)]
 
     def query_one(self, *args, **kwargs):
+        what = kwargs.get('what')
+        if what is None:
+            what = ' '.join(args)
         items = [item for item in self.query(*args)
                  if 'type' not in item]
         if len(items) > 1:
-            what = kwargs.pop(what)
-            if what is None:
-                what = ' '.join(args)
             raise RuntimeError('Got several changes for %s, '
                                'expected one' % what)
         elif len(items) == 1:
+            item = items[0]
+            project = kwargs.get('project')
+            if project and item['project'] != project:
+                raise RuntimeError('Wrong project for change %s: '
+                                   'expected %s, got %s'
+                                   % (change, project, item['project']))
             return items[0]
         else:
-            return None
-
+            if not kwargs.get('strict'):
+                return None
+            raise RuntimeError('Change not found: %s' % what)
 
     def list_projects(self, *args):
         projects = self('ls-projects')
@@ -331,15 +338,8 @@ def _parse_change(change):
 def _fetch_changeset(gerrit, change, project=None):
     change_num, patchset = _parse_change(change)
 
-    item = gerrit.query_one('--current-patch-set',
-                            'change:%s' % change_num)
-    if item is None:
-        raise RuntimeError('Change %s not found' % change_num)
-
-    if project and item['project'] != project:
-        raise RuntimeError('Wrong project for change %s: expected %s, got %s'
-                           % (change, project, item['project']))
-
+    item = gerrit.query_one('--current-patch-set', 'change:%s' % change_num,
+                            strict=True, project=project)
     current_patchset = int(item['currentPatchSet']['number'])
     if patchset is None:
         patchset = current_patchset
@@ -432,11 +432,32 @@ def list_projects(options):
 def open_changeset(options):
     gerrit = Gerrit(options.host, options.user, options.port)
     change_num, patchset = _parse_change(options.changeset[0])
-    item = gerrit.query_one('change:%s' % change_num)
-    if item is None:
-        raise RuntimeError('Change %s not found' % change_num)
+    item = gerrit.query_one('change:%s' % change_num, strict=True)
     url = item['url']
     run_command(options.open_with, url)
+
+
+def spam_reviews(options):
+    gerrit = Gerrit(options.host, options.user, options.port)
+    # first, parse everything to make sure we are ready.
+    changes = [_parse_change(change)
+               for change in options.changeset]
+
+    # NOTE(iv_m): gerrit review requires additional quoting
+    message = subprocess.list2cmdline([options.message])
+    for change_num, patchset in changes:
+        item = gerrit.query_one('--current-patch-set',
+                                'change:%s' % change_num,
+                                strict=True, project=options.project)
+        current_patchset = int(item['currentPatchSet']['number'])
+        if patchset is not None and patchset != current_patchset:
+            raise RuntimeError('Will not spam on non-last patchset %s '
+                               '(current is %s)'
+                               % (patchset, current_patchset))
+        LOG.info('Commenting on change %s: %s[%s]',
+                 change_num, item['subject'], item.get('topic', ''))
+        gerrit('review','-m', message, '-p', options.project,
+               item['currentPatchSet']['revision'])
 
 
 def _expand_project(options):
@@ -522,6 +543,19 @@ def _parse_arguments(args):
                              help='Change number or url')
     parser_open.add_argument('--open-with', '-w', default='xdg-open',
                              help='Program to open changeset with')
+
+
+    # spam command
+    parser_spam = subparsers.add_parser(
+        'spam', help='review several commits with same comment')
+    parser_spam.set_defaults(func=spam_reviews)
+    parser_spam.add_argument('--project', '-p', default=project,
+                             required=(project is None),
+                             help='Gerrit project')
+    parser_spam.add_argument('--message', '-m', required=True,
+                             help='comment message')
+    parser_spam.add_argument('changeset', nargs='+',
+                             help='Change number or url')
 
     # projects subcommand
     parser_projects = subparsers.add_parser('ls-projects',
