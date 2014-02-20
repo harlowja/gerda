@@ -10,7 +10,6 @@ dist
 build
 eggs
 parts
-bin
 var
 sdist
 develop-eggs
@@ -25,12 +24,18 @@ pip-log.txt
 # Unit test / coverage reports
 .coverage
 .tox
+.testrepository
+cover
+htmlcov
 nosetests.xml
 
 # Translations
 *.mo
 
-# Mr Developer
+# Developer
 .mr.developer.cfg
 .project
 .pydevproject
+.idea
+.settings
+*.swp
