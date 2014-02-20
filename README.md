@@ -4,26 +4,35 @@ Gerda
 Gerda is a command-line utility written in Python that combines
 several gerrit-related hacks in one tool. It automates parts
 of my gerrit workflow and provides a convenient place to write
-even more hacks and automate even more parts of it.
+even more hacks and automate even more parts of my workflow.
 
 Gerda should work with any gerrit installation, but some of
 its parts might be more or less tied to what OpenStack CI provides.
 
 
+Requirements
+------------
+
+* git (command-line utils);
+* python 2.6+ (python 3 should work);
+* ssh client
+
+Gerda uses command-line ssh client to communicate with gerrit, so it is
+advised to add your identity key to ssh agent via ssh-add before
+using gerda.
 
 Common arguments
 ----------------
 
-  -h, --help            show this help message and exit
-  --verbose, -v         verbose operation
-  --host HOST, -H HOST  Gerrit hostname
-  --user USER, -U USER  Gerrit username
-  --port PORT, -P PORT  Gerrit SSH port
+You can ask Gerda to be more chatty with -v (--verbose) option.
 
+Gerda tries to derive gerrit location (host, port, username) from
+environment (git remotes, git-review configuration), but it also
+may be specified explicitly on command line:
 
-Host, user and port and project for subcommands that need it
-are sometimes automagically derived from current git repo
-and git-review configuration.
+    --host HOST, -H HOST  Gerrit hostname
+    --user USER, -U USER  Gerrit username
+    --port PORT, -P PORT  Gerrit SSH port
 
 
 Subcommands
@@ -56,6 +65,7 @@ Fetch given (latest by default) patchset from gerrit. The commit
 is put to FETCH_HEAD for farther use.
 
 Example:
+
     $ gerda fetch https://review.openstack.org/63155
     INFO: Fetching change 'Message-oriented worker-based flow with kombu' from ref refs/changes/55/63155/38 into FETCH_HEAD
 
