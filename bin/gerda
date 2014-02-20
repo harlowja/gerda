@@ -432,18 +432,21 @@ def list_projects(options):
 
 def open_changeset(options):
     gerrit = Gerrit(options.host, options.user, options.port)
-    changeset = options.changeset[0]
+    changeset = options.changeset
 
-    try:
-        change_num, patchset = _parse_change(changeset)
-    except ValueError:
-        item = None
+    if changeset is not None:
+        try:
+            change_num, patchset = _parse_change(changeset)
+        except ValueError:
+            item = None
+        else:
+            item = gerrit.query_one('change:%s' % change_num)
+        if item is None and all(c in string.hexdigits for c in changeset):
+            # not found by change id, maybe it's sha1?
+            item = gerrit.query_one('commit:%s' % changeset)
     else:
-        item = gerrit.query_one('change:%s' % change_num)
-
-    if item is None and all(c in string.hexdigits for c in changeset):
-        # not found by change id, maybe it's sha1?
-        item = gerrit.query_one('commit:%s' % changeset)
+        changeset = 'for current HEAD'  # used for not found error
+        item = gerrit.query_one('commit:%s' %  _git('rev-parse', 'HEAD'))
 
     if item is None:
         raise RuntimeError('Change %s not found' % changeset)
@@ -554,7 +557,7 @@ def _parse_arguments(args):
     parser_open = subparsers.add_parser(
         'open', help='open changeset in browser')
     parser_open.set_defaults(func=open_changeset)
-    parser_open.add_argument('changeset', nargs=1,
+    parser_open.add_argument('changeset', nargs='?',
                              help='Change number or url')
     parser_open.add_argument('--open-with', '-w', default='xdg-open',
                              help='Program to open changeset with')
