@@ -429,10 +429,25 @@ def list_projects(options):
     projects = gerrit.list_projects(*options.patterns)
     write_out(u'\n'.join(projects), u'\n')
 
+
 def open_changeset(options):
     gerrit = Gerrit(options.host, options.user, options.port)
-    change_num, patchset = _parse_change(options.changeset[0])
-    item = gerrit.query_one('change:%s' % change_num, strict=True)
+    changeset = options.changeset[0]
+
+    try:
+        change_num, patchset = _parse_change(changeset)
+    except ValueError:
+        item = None
+    else:
+        item = gerrit.query_one('change:%s' % change_num)
+
+    if item is None and all(c in string.hexdigits for c in changeset):
+        # not found by change id, maybe it's sha1?
+        item = gerrit.query_one('commit:%s' % changeset)
+
+    if item is None:
+        raise RuntimeError('Change %s not found' % changeset)
+
     url = item['url']
     run_command(options.open_with, url)
 

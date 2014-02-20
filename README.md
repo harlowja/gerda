@@ -87,7 +87,9 @@ Open changeset in browser. Uses xdg-open by default. For example
 
     $ gerda open refs/changes/55/63155/38
 
-will open https://review.openstack.org/63155 in your default browser.
+will open https://review.openstack.org/63155 in your default browser. It also works
+with plain change numbers (gerda open 63155) and (possibly partial) SHA-1 commit ids
+(gerda open 913bc37b).
 
 ### gerda spam
 
