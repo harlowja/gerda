@@ -1,0 +1,233 @@
+#!/usr/bin/env python
+
+import json
+import re
+import subprocess
+import sys
+
+import argparse
+
+if sys.version < '3':
+    from urlparse import urlparse
+else:
+    from urllib.parse import urlparse
+
+
+class CommandFailed(RuntimeError):
+
+    def __init__(self, cmdline, code, stdout, stderr):
+        message = "Command %s failed, return code = %s" % (cmdline[0], code)
+        super(RuntimeError, self).__init__(message)
+        self.cmdline = cmdline
+        self.code = code
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def __str__(self):
+        result = '%s\nCommand line: %s' % (
+            self.message, subprocess.list2cmdline(self.cmdline))
+        if self.stdout:
+            result += ('\n---<<< Begin captured STDOUT >>>---\n%s'
+                       '---<<< End captured STDOUT >>>---\n' % self.stdout)
+        if self.stderr:
+            result += ('\n---<<< Begin captured STDERR >>>---\n%s'
+                       '---<<< End captured STDERR >>>---\n' % self.stderr)
+        return result
+
+
+def run_command(*args, **kwargs):
+    encoding = kwargs.pop('encoding', 'utf-8')
+    cmdline = [str(arg) for arg in args]
+    obj = subprocess.Popen(cmdline,
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE)
+    output = obj.communicate()
+    rc = obj.wait()
+    if rc != 0:
+        raise CommandFailed(cmdline, rc,
+                            output[0].decode(encoding),
+                            output[1].decode(encoding))
+    return output[0].decode(encoding)
+
+
+def write_out(*args, **kwargs):
+    output = kwargs.pop('output', sys.stdout)
+    encoding = kwargs.pop('encoding', 'utf-8')
+    for arg in args:
+        output.write(arg.encode(encoding))
+
+
+def _git_config_get(param):
+    try:
+        return run_command('git', 'config', '--get', param).strip()
+    except CommandFailed:
+        return None
+
+
+class Gerrit(object):
+
+    def __init__(self, hostname, username, port):
+        userhost = '%s@%s' % (username, hostname)
+        self._cmdline_start = ('ssh', '-x', '-p', port, userhost,
+                               'gerrit', 'query',
+                               '--format=JSON')
+
+    def query(self, *args):
+        cmdline = self._cmdline_start + tuple(args)
+        output = run_command(*cmdline)
+        return [json.loads(line) for line in output.splitlines()]
+
+
+# taken from git-review, with small adjustments
+def parse_git_show(verb, remote='gerrit'):
+    fetch_url = ""
+    for line in run_command('git', 'remote', 'show', '-n', remote).split('\n'):
+        if line.strip().startswith("%s" % verb):
+            fetch_url = line.split()[2]
+
+    parsed_url = urlparse(fetch_url)
+    project_name = parsed_url.path.lstrip("/")
+    if project_name.endswith(".git"):
+        project_name = project_name[:-4]
+
+    hostname = parsed_url.netloc
+    username = None
+    port = parsed_url.port
+
+    # Workaround bug in urlparse on OSX
+    if parsed_url.scheme == "ssh" and parsed_url.path[:2] == "//":
+        hostname = parsed_url.path[2:].split("/")[0]
+
+    if "@" in hostname:
+        (username, hostname) = hostname.split("@")
+    if ":" in hostname:
+        (hostname, port) = hostname.split(":")
+
+    # Is origin an ssh location? Let's pull more info
+    if parsed_url.scheme == "ssh" and port is None:
+        port = 22
+
+    if port is not None:
+        port = str(port)
+
+    return (hostname, username, port, project_name)
+
+
+def _format_approval(approval):
+    value = approval['value']
+    if not value.startswith('-'):
+        value = '+%s' % value
+    try:
+        by = approval['by']['username']
+    except KeyError:
+        by = approval['by']['email']
+    return '%s%s(%s)' % (approval['type'][0], value, by)
+
+
+def _changeset_data(item):
+    approvals = [_format_approval(a)
+                 for a in item['currentPatchSet'].get('approvals', ())]
+
+    data = dict(subject=item['subject'],
+                owner=item['owner']['name'],
+                status=item['status'],
+                url=item['url'],
+                topic=item.get('topic', ''),
+                ref=item['currentPatchSet']['ref'],
+                approvals=approvals)
+    if data['status'] == 'WORKINPROGRESS':
+        data['status'] = 'WIP'
+    return data
+
+
+def _format_changeset(data):
+    data = data.copy()
+    if data['approvals']:
+        data['approvals'] = ' '.join(data['approvals']) + '  '
+    else:
+        data['approvals'] = ''
+
+    # NOTE(imelnikov): extra spaces make output more readable imo.
+    return (u"%(subject)s[%(topic)s] by %(owner)s  %(url)s\n"
+            u"  %(status)s  %(approvals)s%(ref)s"
+            % data)
+
+
+def _compile_pattern(pattern):
+    flags = 0
+    if pattern.lower() == pattern:
+        flags = flags | re.IGNORECASE
+    return re.compile(pattern, flags)
+
+
+def list_changesets(options):
+    """List subcommand handler."""
+    gerrit = Gerrit(options.host, options.user, options.port)
+    output = gerrit.query('--current-patch-set',
+                          'project:%s' % options.project,
+                          'status:open')
+    regexps = [_compile_pattern(pattern)
+               for pattern in options.patterns]
+    for item in output:
+        if item.get('type') == 'stats':
+            continue
+        data = _changeset_data(item)
+        if regexps and not any(rex.search(data['subject'])
+                               or rex.search(data['topic'])
+                               for rex in regexps):
+            continue
+        write_out(_format_changeset(data), u'\n')
+
+
+def dump_config(options):
+    opts = vars(options)
+    for param in ('host', 'port', 'project', 'user'):
+        write_out(u'%s: %s\n' % (param, opts[param]))
+
+
+def _parse_arguments(args):
+    # try to derive gerrit url from git
+    try:
+        host, user, port, project = parse_git_show('Fetch')
+    except CommandFailed:
+        host = 'review.openstack.org'
+        user = _git_config_get('gitreview.username')
+        port = 29418
+        project = None
+
+    parser = argparse.ArgumentParser(prog=args[0])
+    parser.add_argument('--host', '-H', default=host,
+                        help='Gerrit hostname')
+    parser.add_argument('--user', '-U', default=user,
+                        required=(user is None),
+                        help='Gerrit username')
+    parser.add_argument('--port', '-P', default=port,
+                        help='Gerrit SSH port')
+    parser.add_argument('--project', '-p', default=project,
+                        required=(project is None),
+                        help='Gerrit project')
+
+    subparsers = parser.add_subparsers(title='subcommands')
+
+    # list subcommand
+    parser_list = subparsers.add_parser('list', help='list changesets')
+    parser_list.set_defaults(func=list_changesets, operation='List')
+    parser_list.add_argument(
+        'patterns', metavar='PATTERN', nargs='*',
+        help='Display only changes with matching topic or subject')
+
+    # dump-config subcommand
+    parser_list = subparsers.add_parser('dump-config',
+                                        help='print out configuration')
+    parser_list.set_defaults(func=dump_config, operation='Dump config')
+
+    return parser.parse_args(args[1:])
+
+
+def main(args):
+    options = _parse_arguments(args)
+    return options.func(options) or 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
